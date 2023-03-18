@@ -255,48 +255,6 @@ def get_flask_mapping_blueprint(
     return blueprint
 
 
-def get_fastapi_router(
-    converter: Converter, route: str = "/sparql", **kwargs: Any
-) -> "fastapi.APIRouter":
-    """Get a router for :class:`fastapi.FastAPI`.
-
-    :param converter: A converter
-    :param route: The route of the SPARQL service (relative to the base of the API router)
-    :param kwargs: Keyword arguments passed through to :class:`fastapi.APIRouter`
-    :return: A router
-    """
-    from fastapi import APIRouter, Query, Response
-    from pydantic import BaseModel
-
-    class QueryModel(BaseModel):  # type:ignore
-        """A model representing the body in POST queries."""
-
-        query: str
-
-    api_router = APIRouter(**kwargs)
-    graph = MappingServiceGraph(converter=converter)
-    processor = MappingServiceSPARQLProcessor(graph=graph)
-
-    def _resolve(sparql: str) -> Response:
-        results = graph.query(sparql, processor=processor)
-        # TODO enable different serializations
-        return Response(results.serialize(format="json"), media_type="application/json")
-
-    @api_router.get(route)  # type:ignore
-    def resolve_get(
-        query: str = Query(title="Query", description="The SPARQL query to run"),  # noqa:B008
-    ) -> Response:
-        """Run a SPARQL query and serve the results."""
-        return _resolve(query)
-
-    @api_router.post(route)  # type:ignore
-    def resolve_post(query: QueryModel) -> Response:
-        """Run a SPARQL query and serve the results."""
-        return _resolve(query.query)
-
-    return api_router
-
-
 def get_flask_mapping_app(converter: Converter) -> "flask.Flask":
     """Get a Flask app for the mapping service."""
     from flask import Flask
@@ -307,15 +265,33 @@ def get_flask_mapping_app(converter: Converter) -> "flask.Flask":
     return app
 
 
-def get_fastapi_mapping_app(converter: Converter) -> "fastapi.FastAPI":
-    """Get a FastAPI app.
+
+def get_fastapi_mapping_app(
+    converter: Converter, route: str = "/sparql"
+) -> "fastapi.FastAPI":
+    """Get a FastAPI app with the mapping SPARQL endpoint served on /sparql .
 
     :param converter: A converter
-    :return: A FastAPI app
+    :param route: The route of the SPARQL service (relative to the base of the Blueprint)
+    :return: A blueprint
     """
-    from fastapi import FastAPI
+    from rdflib_endpoint import SparqlEndpoint
 
-    router = get_fastapi_router(converter)
-    app = FastAPI()
-    app.include_router(router)
+    graph = MappingServiceGraph(converter=converter)
+    processor = MappingServiceSPARQLProcessor(graph=graph)
+
+    app = SparqlEndpoint(
+        graph=graph,
+        path=route,
+        title="Bioregistry SPARQL endpoint",
+        description="A SPARQL endpoint to serve the bioregistry",
+        version='0.0.1',
+        public_url="https://bioregistry.io/sparql",
+        cors_enabled=True,
+        processor=processor,
+        example_query="""PREFIX owl: <http://www.w3.org/2002/07/owl#>
+SELECT DISTINCT ?o WHERE {
+    <http://purl.obolibrary.org/obo/CHEBI_24867> owl:sameAs ?o .
+}"""
+    )
     return app
